@@ -6,7 +6,7 @@
 
 ![Model Bench 本地看板示例](docs/dashboard.png)
 
-*示例图使用虚构模型和测速数据。*
+*本地看板示例。端点地址与 API Key 不会显示在看板中。*
 
 ## 特性
 

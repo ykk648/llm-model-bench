@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Model Bench</title>
+  <link rel="stylesheet" href="/static/style.css?v=4">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">M</span><span>MODEL <small>BENCH</small></span></div>
+    <span class="endpoint" id="endpoint"></span>
+    <span class="connection" id="connection">连接检查中</span><a class="settings-link" id="config-link" href="/settings" hidden>配置</a>
+  </header>
+  <main>
+    <section class="heading">
+      <div>
+        <div class="eyebrow">可复现实测 <span class="line"></span> QUALITY × SPEED</div>
+        <h1>测出更稳，<br><em>也更快</em>的模型。</h1>
+        <p>将本地配置、公开能力快照与真实接口测速并排呈现。</p>
+      </div>
+      <div class="summary">
+        <div><strong id="total">—</strong><span>接口模型</span></div>
+        <div><strong id="ranked">—</strong><span>有据可排</span></div>
+        <div><strong id="measured">—</strong><span>已测速度</span></div>
+      </div>
+    </section>
+    <section class="workspace">
+      <div class="toolbar">
+        <div class="toolbar-title"><h2>模型榜单</h2><span id="updated"></span></div>
+        <div class="actions">
+          <button class="batch-benchmark" id="batch-benchmark" type="button" hidden disabled>测速所选</button>
+          <label class="search"><span>⌕</span><input id="search" type="search" placeholder="搜索模型" aria-label="搜索模型"></label>
+          <select id="filter" aria-label="筛选模型">
+            <option value="all">全部模型</option><option value="ranked">已排名</option><option value="unranked">未匹配</option>
+          </select>
+        </div>
+      </div>
+      <div class="notice" id="notice" hidden></div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th id="select-header" class="select-cell" hidden><input id="select-all" type="checkbox" aria-label="选择当前筛选结果"></th><th class="rank-col">排名</th><th>模型</th><th>综合百分位 <span title="来自用户导入的公开数据快照；缺项在已知权重间归一。">ⓘ</span></th><th>价格 · $/百万 token <span title="来自用户导入的可选价格快照。">ⓘ</span></th><th>榜单依据</th><th>TTFT <span title="请求开始到首个可见文本增量">ⓘ</span></th><th>输出 tok/s <span title="可见文本开始后的输出 token 速率；估算值会标记“参考”">ⓘ</span></th><th>测试时间</th><th id="action-header" hidden>操作</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="empty" hidden></div>
+    <div class="table-footer"><span id="count"></span><span><b id="scope">前 10 名</b>串行 · 每模型 2 次取中位 · <b id="interval">72</b> 小时冷却 · 单次上限 <b id="tokens">2048</b> token</span></div>
+    </section>
+    <footer>
+      <span>能力分来自可选的公开数据快照，并非本站自行测试或官方分数。无法唯一匹配的模型不参与排名。</span>
+      <span>速度来自本地真实请求。网页测速可由管理员开启；所有密钥仅由服务端环境变量读取。价格：<time id="price-date"></time> 快照。</span>
+    </footer>
+  </main>
+  <script src="/static/app.js?v=4" defer></script>
+</body>
+</html>

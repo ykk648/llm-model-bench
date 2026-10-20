@@ -1,0 +1,56 @@
+# Copy to model-bench.toml. Keep this file generic; endpoint URLs and credentials are local data.
+
+[paths]
+database = "data/results.sqlite3"
+# These files are optional. Import or maintain only data you are permitted to redistribute.
+rankings = "rankings.example.json"
+prices = "prices.example.json"
+
+[benchmark]
+# Strictly serial: model-bench never runs benchmark requests concurrently.
+samples = 2
+max_output_tokens = 512
+cooldown_hours = 72
+request_timeout_seconds = 120
+connect_timeout_seconds = 15
+top_n = 10
+ranked_only = false
+
+[web]
+# Keep false for a public deployment. Use the CLI for paid requests.
+allow_benchmark = false
+# Lets an authenticated administrator edit endpoint/model TOML from /settings.
+allow_config_ui = false
+# When browser benchmarking is enabled, require this server-side environment variable.
+admin_token_env = "MODEL_BENCH_ADMIN_TOKEN"
+
+[[endpoints]]
+id = "primary-gateway"
+base_url = "https://api.example.com/v1"
+api_key_env = "MODEL_BENCH_GATEWAY_KEY"
+protocol = "responses"
+kind = "provider"
+
+[[models]]
+id = "example-reasoning-model"
+endpoint = "primary-gateway"
+request_model = "example-reasoning-model"
+display_name = "Example Reasoning Model"
+protocol = "responses"
+reasoning_effort = "high"
+tags = ["text", "coding"]
+
+# A separate display ID can target a self-hosted request model.
+[[endpoints]]
+id = "self-hosted"
+base_url = "http://127.0.0.1:8000/v1"
+protocol = "chat"
+kind = "self-hosted"
+
+[[models]]
+id = "My-Self-Hosted-Model-2026-10"
+endpoint = "self-hosted"
+request_model = "actual-server-model-id"
+display_name = "My Self Hosted Model"
+protocol = "chat"
+tags = ["text", "self-hosted"]

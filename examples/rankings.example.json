@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-01-01T00:00:00Z",
+  "models": [
+    {
+      "id": "example/example-reasoning-model",
+      "name": "Example Reasoning Model",
+      "scores": [
+        {"league": "eci", "score": 150, "source": "Example source", "sourceUrl": "https://example.com"},
+        {"league": "livebench_coding", "score": 70, "source": "Example source", "sourceUrl": "https://example.com"}
+      ]
+    }
+  ]
+}

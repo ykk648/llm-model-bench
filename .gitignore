@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+dist/
+.DS_Store
+model-bench.toml
+model-bench.local.toml
+data/*
+!data/.gitkeep
+*.sqlite3
+*.sqlite3-*
+examples/data/*.sqlite3

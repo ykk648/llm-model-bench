@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Model Bench · 配置</title>
+  <link rel="stylesheet" href="/static/style.css?v=3">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">M</span><span>MODEL <small>BENCH</small></span></div>
+    <a class="settings-link" href="/">返回榜单</a>
+  </header>
+  <main>
+    <section class="workspace config-workspace">
+      <div class="toolbar"><div class="toolbar-title"><h2>配置</h2><span id="state"></span></div><label class="token-input"><span>管理员令牌</span><input id="token" type="password" autocomplete="off"></label></div>
+      <div class="notice" id="notice" hidden></div>
+
+      <section class="settings-section">
+        <div class="section-heading"><div><h3>订阅端点</h3><p>订阅地址写入本地配置；实际密钥只从服务端环境变量读取。</p></div></div>
+        <form id="endpoint-form" class="endpoint-form">
+          <label><span>端点标识</span><input id="endpoint-id" required placeholder="primary-gateway" pattern="[A-Za-z0-9._-]+"></label>
+          <label class="endpoint-url"><span>订阅地址</span><input id="endpoint-url" required type="url" placeholder="https://api.example.com/v1"></label>
+          <label><span>协议</span><select id="endpoint-protocol"><option value="responses">Responses</option><option value="chat">Chat Completions</option><option value="messages">Anthropic Messages</option></select></label>
+          <label><span>密钥环境变量</span><input id="endpoint-key-env" placeholder="MODEL_BENCH_GATEWAY_KEY"></label>
+          <label><span>类型</span><select id="endpoint-kind"><option value="provider">服务商</option><option value="self-hosted">自建</option></select></label>
+          <button id="add-endpoint" type="submit">添加端点</button>
+        </form>
+        <div class="endpoint-list" id="endpoint-list"></div>
+      </section>
+
+      <section class="settings-section">
+        <div class="section-heading"><div><h3>刷新并导入模型</h3><p>从端点的 <code>/models</code> 拉取模型清单。仅导入你勾选的文本模型，不会发起推理请求。</p></div></div>
+        <div class="discover-controls">
+          <select id="discover-endpoint" aria-label="选择端点"></select>
+          <button id="discover" type="button">刷新模型</button>
+          <button id="import-models" type="button" disabled>添加已选模型</button>
+        </div>
+        <div class="discover-list" id="discover-list"><span class="muted">选择端点后刷新模型列表。</span></div>
+      </section>
+
+      <section class="settings-section advanced-settings">
+        <div class="section-heading"><div><h3>高级配置</h3><p>需要别名、思考强度或标签时，可直接编辑 TOML；保存后立即校验并重载。</p></div></div>
+        <label class="config-editor"><span>model-bench.toml</span><textarea id="toml" spellcheck="false" aria-label="model-bench.toml"></textarea></label>
+        <div class="config-actions"><button id="save" type="button">保存并重新加载</button></div>
+      </section>
+    </section>
+  </main>
+  <script src="/static/settings.js?v=5" defer></script>
+</body>
+</html>

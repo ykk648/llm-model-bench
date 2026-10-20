@@ -1,0 +1,9 @@
+{
+  "captured_at": "2026-01-01",
+  "currency": "USD",
+  "unit": "per_million_tokens",
+  "models": {
+    "example-reasoning-model": {"input": 1.0, "output": 4.0},
+    "My-Self-Hosted-Model-2026-10": null
+  }
+}

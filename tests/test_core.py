@@ -148,6 +148,36 @@ def test_responses_stream_sends_mapped_model_and_effort(tmp_path: Path, monkeypa
     assert seen[0]["reasoning"] == {"effort": "high"}
 
 
+def test_messages_stream_uses_anthropic_endpoint_and_headers(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("TEST_GATEWAY_KEY", "secret")
+    path = write_config(tmp_path)
+    path.write_text(path.read_text().replace('protocol = "responses"', 'protocol = "messages"'))
+    config = load_config(path)
+    model = config.models["Public-Name"]
+    endpoint = config.endpoint_for(model.id)
+    seen = []
+
+    def handler(request: httpx.Request):
+        seen.append(request)
+        return httpx.Response(200, text=(
+            'data: {"type":"message_start","message":{"usage":{"output_tokens":0}}}\n\n'
+            'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"你好"}}\n\n'
+            'data: {"type":"message_delta","usage":{"output_tokens":200}}\n\n'
+            'data: {"type":"message_stop"}\n\n'
+        ))
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await measure(client, endpoint, "secret", model, config.benchmark)
+
+    result = asyncio.run(run())
+    assert result.status == "ok"
+    assert seen[0].url.path == "/v1/messages"
+    assert seen[0].headers["x-api-key"] == "secret"
+    assert seen[0].headers["anthropic-version"] == "2023-06-01"
+    assert json.loads(seen[0].content)["model"] == "actual-server-id"
+
+
 def test_fallback_only_retries_unsupported_protocol(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("TEST_GATEWAY_KEY", "secret")
     config = load_config(write_config(tmp_path))
@@ -627,6 +657,26 @@ def test_configuration_ui_saves_new_endpoint_key_without_exposing_it(tmp_path: P
     assert "private-secret-value" not in path.read_text()
     assert "private-secret-value" in (tmp_path / ".env").read_text()
     assert (tmp_path / ".env").stat().st_mode & 0o777 == 0o600
+
+
+def test_configuration_ui_imports_claude_models_with_messages_protocol(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("TEST_GATEWAY_KEY", "secret-value")
+    path = write_config(tmp_path)
+    path.write_text(path.read_text().replace(
+        "allow_benchmark = false",
+        "allow_benchmark = false\nallow_config_ui = true",
+    ))
+
+    with TestClient(create_app(path)) as client:
+        imported = client.post("/api/discover/gateway/import", json={
+            "models": ["claude-opus-test", "anthropic/claude-sonnet-test", "gpt-test"],
+        })
+        assert imported.status_code == 200
+
+    config = load_config(path)
+    assert config.models["claude-opus-test"].protocol == "messages"
+    assert config.models["anthropic/claude-sonnet-test"].protocol == "messages"
+    assert config.models["gpt-test"].protocol == "responses"
 
 
 def test_configuration_ui_round_trips_network_settings(tmp_path: Path, monkeypatch):

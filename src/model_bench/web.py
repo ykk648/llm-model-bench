@@ -52,6 +52,11 @@ def _default_key_env(endpoint_id: str) -> str:
     return f"MODEL_BENCH_{normalized or 'ENDPOINT'}_KEY"
 
 
+def _discovered_model_protocol(model_id: str, endpoint_protocol: str) -> str:
+    model_name = model_id.rsplit("/", 1)[-1].lower()
+    return "messages" if model_name.startswith("claude-") else endpoint_protocol
+
+
 def _error_text(exc: Exception, limit: int = 500) -> str:
     return (str(exc).strip() or type(exc).__name__)[:limit]
 
@@ -444,13 +449,14 @@ def create_app(config_path: str | Path | None = None) -> FastAPI:
             return {"imported": [], "skipped": skipped, "model_count": len(config.models)}
         blocks = []
         for model_id in imports:
+            protocol = _discovered_model_protocol(model_id, endpoint.protocol)
             blocks.append(
                 "[[models]]\n"
                 f"id = {_toml_string(model_id)}\n"
                 f"endpoint = {_toml_string(endpoint_id)}\n"
                 f"request_model = {_toml_string(model_id)}\n"
                 f"display_name = {_toml_string(model_id)}\n"
-                f"protocol = {_toml_string(endpoint.protocol)}\n"
+                f"protocol = {_toml_string(protocol)}\n"
                 "tags = [\"text\"]\n"
             )
         replace_config(config.path.read_text().rstrip() + "\n\n" + "\n".join(blocks))

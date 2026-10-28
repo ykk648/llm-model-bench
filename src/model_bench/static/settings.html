@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Model Bench · 配置</title>
-  <link rel="stylesheet" href="/static/style.css?v=3">
+  <link rel="stylesheet" href="/static/style.css?v=8">
 </head>
 <body>
   <header class="topbar">
@@ -13,20 +13,64 @@
   </header>
   <main>
     <section class="workspace config-workspace">
-      <div class="toolbar"><div class="toolbar-title"><h2>配置</h2><span id="state"></span></div><label class="token-input"><span>管理员令牌</span><input id="token" type="password" autocomplete="off"></label></div>
+      <div class="toolbar"><div class="toolbar-title"><h2>配置</h2><span id="state"></span></div><label class="token-input" id="token-field"><span>管理员令牌</span><input id="token" type="password" autocomplete="off"></label></div>
       <div class="notice" id="notice" hidden></div>
 
       <section class="settings-section">
-        <div class="section-heading"><div><h3>订阅端点</h3><p>订阅地址写入本地配置；实际密钥只从服务端环境变量读取。</p></div></div>
+        <div class="section-heading"><div><h3>添加 API 服务</h3><p>服务名称仅用于区分不同 API；地址写入本地配置，API Key 仅保存到本机 <code>.env</code>。</p></div></div>
         <form id="endpoint-form" class="endpoint-form">
-          <label><span>端点标识</span><input id="endpoint-id" required placeholder="primary-gateway" pattern="[A-Za-z0-9._-]+"></label>
+          <label><span>服务名称</span><input id="endpoint-id" required placeholder="openrouter" pattern="[A-Za-z0-9._-]+"></label>
           <label class="endpoint-url"><span>订阅地址</span><input id="endpoint-url" required type="url" placeholder="https://api.example.com/v1"></label>
           <label><span>协议</span><select id="endpoint-protocol"><option value="responses">Responses</option><option value="chat">Chat Completions</option><option value="messages">Anthropic Messages</option></select></label>
-          <label><span>密钥环境变量</span><input id="endpoint-key-env" placeholder="MODEL_BENCH_GATEWAY_KEY"></label>
+          <label><span>API Key</span><input id="endpoint-key" type="password" autocomplete="new-password" placeholder="sk-..." spellcheck="false"></label>
           <label><span>类型</span><select id="endpoint-kind"><option value="provider">服务商</option><option value="self-hosted">自建</option></select></label>
-          <button id="add-endpoint" type="submit">添加端点</button>
+          <button id="add-endpoint" type="submit">添加服务并导入模型</button>
         </form>
         <div class="endpoint-list" id="endpoint-list"></div>
+      </section>
+
+      <section class="settings-section">
+        <div class="section-heading"><div><h3>榜单数据源</h3><p>共 4 个来源，只有 Artificial Analysis 需要 Key；密钥只保存在本机 <code>.env</code>，不会写入榜单快照。</p></div></div>
+        <div class="ranking-source-list">
+          <div class="ranking-source-item">
+            <div><strong>Epoch AI</strong><small>用于获取 ECI 与 GPQA 榜单数据，刷新时自动获取。</small></div>
+            <a href="https://epoch.ai/benchmarks" target="_blank" rel="noopener">查看来源</a>
+            <span class="source-state ready">无需 Key</span>
+          </div>
+          <div class="ranking-source-item">
+            <div><strong>LiveBench Coding</strong><small>用于获取代码能力榜单数据，刷新时自动获取。</small></div>
+            <a href="https://livebench.ai/" target="_blank" rel="noopener">查看来源</a>
+            <span class="source-state ready">无需 Key</span>
+          </div>
+          <div class="ranking-source-item">
+            <div><strong>LMArena Text</strong><small>官方公开数据集，刷新时自动获取，无需 Key。</small></div>
+            <a href="https://lmarena.ai/leaderboard/text" target="_blank" rel="noopener">查看来源</a>
+            <span class="source-state ready">无需 Key</span>
+          </div>
+          <div class="ranking-source-item ranking-source-key">
+            <div><strong>Artificial Analysis</strong><small>用于获取 Intelligence Index。可在官方 Data API 页面申请 Key。</small></div>
+            <a href="https://artificialanalysis.ai/data-api" target="_blank" rel="noopener">获取 Key</a>
+            <label><span>API Key</span><input id="artificial-analysis-key" type="password" autocomplete="new-password" placeholder="粘贴 API Key" spellcheck="false"></label>
+            <span class="source-state" id="artificial-analysis-key-status">未配置</span>
+            <button id="save-artificial-analysis-key" type="button">保存 Key</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <div class="section-heading"><div><h3>网络与代理</h3><p>请求不会读取服务器的系统代理环境，测速与榜单抓取按这里的设置独立处理。</p></div></div>
+        <div class="network-form">
+          <label class="proxy-toggle">
+            <input id="benchmark-use-proxy" type="checkbox">
+            <span><strong>测速使用代理</strong><small>关闭时直接连接模型服务；开启后，测速和模型列表请求使用备用代理。</small></span>
+          </label>
+          <label class="proxy-address">
+            <span>榜单抓取备用代理</span>
+            <input id="fallback-proxy" type="url" inputmode="url" placeholder="http://127.0.0.1:7897" spellcheck="false">
+            <small>刷新榜单始终先直连官网，仅在连接、DNS 或超时失败后自动重试。</small>
+          </label>
+          <button id="save-network" type="button">保存网络设置</button>
+        </div>
       </section>
 
       <section class="settings-section">
@@ -34,6 +78,7 @@
         <div class="discover-controls">
           <select id="discover-endpoint" aria-label="选择端点"></select>
           <button id="discover" type="button">刷新模型</button>
+          <button id="select-all-models" type="button" disabled>全选未导入</button>
           <button id="import-models" type="button" disabled>添加已选模型</button>
         </div>
         <div class="discover-list" id="discover-list"><span class="muted">选择端点后刷新模型列表。</span></div>
@@ -46,6 +91,6 @@
       </section>
     </section>
   </main>
-  <script src="/static/settings.js?v=5" defer></script>
+  <script src="/static/settings.js?v=8" defer></script>
 </body>
 </html>

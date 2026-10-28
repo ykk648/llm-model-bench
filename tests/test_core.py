@@ -6,10 +6,12 @@ from pathlib import Path
 import httpx
 from fastapi.testclient import TestClient
 
-from model_bench.benchmark import measure, measure_samples
+import model_bench.ranking_sources as ranking_sources
+from model_bench.benchmark import Result, measure, measure_samples
 from model_bench.config import ConfigError, load_config
 from model_bench.engine import BenchmarkEngine
 from model_bench.ranking import Rankings
+from model_bench.ranking_sources import RankingRefreshError, model_family, refresh_public_rankings
 from model_bench.web import create_app
 
 
@@ -63,6 +65,43 @@ def test_config_separates_display_and_request_model(tmp_path: Path, monkeypatch)
     assert model.display_name == "Display Name"
     assert model.request_model == "actual-server-id"
     assert config.api_key_for(config.endpoint_for(model.id)) == "secret"
+    assert config.network.benchmark_use_proxy is False
+    assert config.network.fallback_proxy is None
+
+
+def test_benchmark_proxy_policy_is_explicit_and_ignores_environment(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("TEST_GATEWAY_KEY", "secret")
+    monkeypatch.setenv("HTTPS_PROXY", "http://environment-proxy.invalid:9999")
+    path = write_config(tmp_path)
+    clients = []
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            clients.append(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+    async def fake_measure(_client, _endpoint, _key, model, _settings):
+        return Result(model.id, model.protocol, "ok")
+
+    monkeypatch.setattr("model_bench.engine.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("model_bench.engine.measure_samples", fake_measure)
+
+    asyncio.run(BenchmarkEngine(load_config(path)).benchmark_one("Public-Name"))
+    assert clients[-1]["trust_env"] is False
+    assert clients[-1]["proxy"] is None
+
+    path.write_text(path.read_text().replace(
+        "[web]",
+        '[network]\nbenchmark_use_proxy = true\nfallback_proxy = "http://127.0.0.1:7897"\n\n[web]',
+    ))
+    asyncio.run(BenchmarkEngine(load_config(path)).benchmark_one("Public-Name"))
+    assert clients[-1]["trust_env"] is False
+    assert clients[-1]["proxy"] == "http://127.0.0.1:7897"
 
 
 def test_config_rejects_unknown_endpoint(tmp_path: Path):
@@ -133,6 +172,24 @@ def test_fallback_only_retries_unsupported_protocol(tmp_path: Path, monkeypatch)
     result = asyncio.run(run())
     assert result.protocol == "chat" and result.status == "ok"
     assert paths == ["/v1/responses", "/v1/chat/completions"]
+
+
+def test_empty_transport_error_reports_exception_type(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("TEST_GATEWAY_KEY", "secret")
+    config = load_config(write_config(tmp_path))
+    model = config.models["Public-Name"]
+    endpoint = config.endpoint_for(model.id)
+
+    def handler(request: httpx.Request):
+        raise httpx.ConnectTimeout("", request=request)
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await measure(client, endpoint, "secret", model, config.benchmark)
+
+    result = asyncio.run(run())
+    assert result.status == "error"
+    assert result.error == "ConnectTimeout"
 
 
 def test_samples_are_serial_and_median_is_saved(tmp_path: Path, monkeypatch):
@@ -217,6 +274,386 @@ def test_configuration_ui_imports_selected_discovered_models(tmp_path: Path, mon
         config = load_config(path)
         assert config.models["new-text-model"].endpoint == "gateway"
         assert config.models["new-text-model"].request_model == "new-text-model"
+
+
+def test_configuration_ui_refreshes_ranking_snapshot(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("TEST_GATEWAY_KEY", "secret-value")
+    path = write_config(tmp_path)
+    path.write_text(path.read_text().replace("allow_benchmark = false", "allow_benchmark = false\nallow_config_ui = true"))
+    with TestClient(create_app(path)) as client:
+        assert client.get("/api/leaderboard").json()[0]["name"] == "Actual Server"
+
+        def fake_refresh():
+            rankings_path = tmp_path / "rankings.json"
+            snapshot = json.loads(rankings_path.read_text())
+            snapshot["generatedAt"] = "2026-10-28T01:00:00Z"
+            snapshot["sources"] = [{"name": "Epoch AI", "status": "ok"}]
+            snapshot["models"][0]["name"] = "Updated Server"
+            rankings_path.write_text(json.dumps(snapshot))
+            client.app.state.engine.reload_rankings()
+            return snapshot
+
+        client.app.state.engine.refresh_rankings = fake_refresh
+
+        refreshed = client.post("/api/rankings/refresh")
+        assert refreshed.status_code == 200
+        assert refreshed.json()["ranked_count"] == 1
+        assert refreshed.json()["sources"][0]["name"] == "Epoch AI"
+        assert client.get("/api/leaderboard").json()[0]["name"] == "Updated Server"
+
+
+def test_public_ranking_refresh_fetches_and_atomically_combines_sources(tmp_path: Path):
+    path = tmp_path / "rankings.json"
+
+    def handler(request: httpx.Request):
+        url = str(request.url)
+        if url.endswith("/eci_scores.csv"):
+            return httpx.Response(200, text=(
+                "Model,Display name,eci,model_versions\n"
+                "Claude Opus 4.6,Claude Opus 4.6,160.5,claude-opus-4-6\n"
+            ))
+        if url.endswith("/eci_benchmarks.csv"):
+            return httpx.Response(200, text=(
+                "benchmark,performance,Model,model_version\n"
+                "GPQA diamond,0.82,Claude Opus 4.6,claude-opus-4-6\n"
+            ))
+        if url == "https://livebench.ai/":
+            return httpx.Response(200, text='<script src="./static/js/main.test.js"></script>')
+        if url.endswith("/main.test.js"):
+            return httpx.Response(200, text='const RELEASES=["20261014","20261025"];')
+        if url.endswith("/data/20261025/categories.json"):
+            return httpx.Response(200, json={"Coding": ["code_generation", "code_completion"]})
+        if url.endswith("/data/20261025/table.csv"):
+            return httpx.Response(200, text=(
+                "model,code_generation,code_completion\n"
+                "claude-opus-4-6-thinking-auto-high-effort,80,76\n"
+            ))
+        if request.url.host == "datasets-server.huggingface.co":
+            return httpx.Response(200, json={
+                "rows": [{"row": {
+                    "model_name": "Claude Opus 4.6 (High)",
+                    "rating": 1480.5,
+                    "rank": 2,
+                    "category": "overall",
+                    "leaderboard_publish_date": "2026-10-22",
+                }}],
+                "num_rows_total": 1,
+            })
+        if "/data/20261014/" in url:
+            return httpx.Response(404)
+        raise AssertionError(f"unexpected URL: {url}")
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        snapshot = refresh_public_rankings(path, client)
+
+    assert snapshot["sources"][1]["published_at"] == "2026-10-25"
+    model = snapshot["models"][0]
+    assert model["id"] == "claude-opus-4-6"
+    assert {score["league"] for score in model["scores"]} == {
+        "eci", "gpqa_diamond", "livebench_coding", "arena_text",
+    }
+    assert snapshot["sources"][2]["name"] == "LMArena"
+    assert snapshot["sources"][3]["status"] == "skipped"
+    assert Rankings(path).match("claude-opus-4-6_0.4")["id"] == "claude-opus-4-6"
+    assert model_family("openai/gpt_oss") == "gpt-oss"
+    assert model_family("qwen3.8-max_xhigh") == "qwen3-8-max"
+    assert model_family("Qwen 3.8 Max") == "qwen3-8-max"
+
+
+def _ranking_success_handler(request: httpx.Request) -> httpx.Response:
+    url = str(request.url)
+    if url.endswith("/eci_scores.csv"):
+        return httpx.Response(200, text="Model,Display name,eci\nModel A,Model A,150\n")
+    if url.endswith("/eci_benchmarks.csv"):
+        return httpx.Response(200, text="benchmark,performance,Model\nGPQA diamond,0.8,Model A\n")
+    if url == "https://livebench.ai/":
+        return httpx.Response(200, text='<script src="./static/js/main.test.js"></script>')
+    if url.endswith("/main.test.js"):
+        return httpx.Response(200, text='const RELEASES=["20261025"];')
+    if url.endswith("/data/20261025/categories.json"):
+        return httpx.Response(200, json={"Coding": ["coding"]})
+    if url.endswith("/data/20261025/table.csv"):
+        return httpx.Response(200, text="model,coding\nmodel-a,75\n")
+    if request.url.host == "datasets-server.huggingface.co":
+        return httpx.Response(200, json={
+            "rows": [{"row": {
+                "model_name": "Model A (High)",
+                "rating": 1400.0,
+                "rank": 1,
+                "category": "overall",
+                "leaderboard_publish_date": "2026-10-22",
+            }}],
+            "num_rows_total": 1,
+        })
+    raise AssertionError(f"unexpected URL: {url}")
+
+
+def test_artificial_analysis_key_fetches_intelligence_index(tmp_path: Path):
+    def handler(request: httpx.Request):
+        if request.url.host == "artificialanalysis.ai":
+            assert request.headers["x-api-key"] == "aa-secret"
+            return httpx.Response(200, json={
+                "status": 200,
+                "last_updated": "2026-10-27T00:00:00Z",
+                "data": [{
+                    "model": {"name": "Model A", "slug": "model-a"},
+                    "evaluations": {"artificial_analysis_intelligence_index": 72.4},
+                }],
+                "meta": {"total_pages": 1, "current_page": 1},
+            })
+        return _ranking_success_handler(request)
+
+    path = tmp_path / "rankings.json"
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        snapshot = refresh_public_rankings(path, client, artificial_analysis_api_key="aa-secret")
+
+    model = next(item for item in snapshot["models"] if item["id"] == "model-a")
+    assert next(score for score in model["scores"] if score["league"] == "aa_intelligence")["score"] == 72.4
+    assert snapshot["sources"][3]["status"] == "ok"
+
+
+def test_artificial_analysis_accepts_current_flattened_model_shape(tmp_path: Path):
+    def handler(request: httpx.Request):
+        if request.url.host == "artificialanalysis.ai":
+            return httpx.Response(200, json={
+                "status": 200,
+                "data": [{
+                    "name": "Model A",
+                    "slug": "model-a",
+                    "evaluations": {"artificial_analysis_intelligence_index": 74.2},
+                }],
+            })
+        return _ranking_success_handler(request)
+
+    path = tmp_path / "rankings.json"
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        snapshot = refresh_public_rankings(path, client, artificial_analysis_api_key="aa-secret")
+
+    model = next(item for item in snapshot["models"] if item["id"] == "model-a")
+    score = next(item for item in model["scores"] if item["league"] == "aa_intelligence")
+    assert score["score"] == 74.2
+
+
+def test_incremental_ranking_refresh_reuses_successes_and_retries_skipped_source(tmp_path: Path):
+    path = tmp_path / "rankings.json"
+    with httpx.Client(transport=httpx.MockTransport(_ranking_success_handler)) as client:
+        first = refresh_public_rankings(path, client, configured_models=["model-a"])
+    assert [source["status"] for source in first["sources"]] == ["ok", "ok", "ok", "skipped"]
+
+    requested_hosts = []
+
+    def artificial_analysis_only(request: httpx.Request):
+        requested_hosts.append(request.url.host)
+        assert request.url.host == "artificialanalysis.ai"
+        return httpx.Response(200, json={
+            "status": 200,
+            "data": [{
+                "name": "Model A",
+                "slug": "model-a",
+                "evaluations": {"artificial_analysis_intelligence_index": 76.5},
+            }],
+        })
+
+    with httpx.Client(transport=httpx.MockTransport(artificial_analysis_only)) as client:
+        second = refresh_public_rankings(
+            path,
+            client,
+            artificial_analysis_api_key="aa-secret",
+            configured_models=["model-a"],
+        )
+
+    assert requested_hosts == ["artificialanalysis.ai"]
+    assert [source["status"] for source in second["sources"]] == ["cached", "cached", "cached", "ok"]
+    assert second["fetchedVia"] == "mixed"
+
+    def no_requests_expected(request: httpx.Request):
+        raise AssertionError(f"unexpected refresh request: {request.url}")
+
+    with httpx.Client(transport=httpx.MockTransport(no_requests_expected)) as client:
+        third = refresh_public_rankings(
+            path,
+            client,
+            artificial_analysis_api_key="aa-secret",
+            configured_models=["model-a"],
+        )
+    assert all(source["status"] == "cached" for source in third["sources"])
+    assert third["fetchedVia"] == "cache"
+
+
+def test_ranking_refresh_direct_success_does_not_open_proxy(tmp_path: Path, monkeypatch):
+    calls = []
+
+    def client_factory(proxy=None):
+        calls.append(proxy)
+        return httpx.Client(transport=httpx.MockTransport(_ranking_success_handler))
+
+    monkeypatch.setattr(ranking_sources, "_ranking_client", client_factory)
+    snapshot = refresh_public_rankings(tmp_path / "rankings.json", fallback_proxy="http://127.0.0.1:7897")
+
+    assert calls == [None]
+    assert snapshot["fetchedVia"] == "direct"
+
+
+def test_ranking_refresh_retries_transport_failure_with_fallback_proxy(tmp_path: Path, monkeypatch):
+    calls = []
+
+    def client_factory(proxy=None):
+        calls.append(proxy)
+        if proxy is None:
+            def fail(request: httpx.Request):
+                raise httpx.ConnectError("direct connection failed", request=request)
+            return httpx.Client(transport=httpx.MockTransport(fail))
+        return httpx.Client(transport=httpx.MockTransport(_ranking_success_handler))
+
+    monkeypatch.setattr(ranking_sources, "_ranking_client", client_factory)
+    snapshot = refresh_public_rankings(tmp_path / "rankings.json", fallback_proxy="http://127.0.0.1:7897")
+
+    assert calls == [None, "http://127.0.0.1:7897"]
+    assert snapshot["fetchedVia"] == "fallback_proxy"
+
+
+def test_ranking_refresh_parse_failure_does_not_retry_proxy(tmp_path: Path, monkeypatch):
+    calls = []
+
+    def client_factory(proxy=None):
+        calls.append(proxy)
+
+        def invalid(request: httpx.Request):
+            if str(request.url).endswith("/eci_scores.csv"):
+                return httpx.Response(200, text="wrong,columns\na,b\n")
+            raise AssertionError("parse failure should stop before another request")
+
+        return httpx.Client(transport=httpx.MockTransport(invalid))
+
+    monkeypatch.setattr(ranking_sources, "_ranking_client", client_factory)
+    try:
+        refresh_public_rankings(tmp_path / "rankings.json", fallback_proxy="http://127.0.0.1:7897")
+    except RankingRefreshError:
+        pass
+    else:
+        raise AssertionError("expected ranking parse failure")
+
+    assert calls == [None]
+
+
+def test_public_ranking_refresh_preserves_previous_snapshot_on_failure(tmp_path: Path):
+    path = tmp_path / "rankings.json"
+    previous = {"generatedAt": "old", "models": [{"id": "old", "scores": []}]}
+    path.write_text(json.dumps(previous))
+
+    def handler(request: httpx.Request):
+        if str(request.url).endswith("/eci_scores.csv"):
+            return httpx.Response(200, text="Model,eci\nModel A,150\n")
+        if str(request.url).endswith("/eci_benchmarks.csv"):
+            return httpx.Response(200, text="benchmark,performance,Model\nGPQA diamond,0.8,Model A\n")
+        return httpx.Response(503, text="unavailable")
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        try:
+            refresh_public_rankings(path, client)
+        except RankingRefreshError:
+            pass
+        else:
+            raise AssertionError("expected ranking refresh failure")
+
+    assert json.loads(path.read_text()) == previous
+
+
+def test_configuration_ui_saves_new_endpoint_key_without_exposing_it(tmp_path: Path, monkeypatch):
+    path = write_config(tmp_path)
+    path.write_text(path.read_text().replace("allow_benchmark = false", "allow_benchmark = false\nallow_config_ui = true"))
+    key_env = "MODEL_BENCH_PRIVATE_GATEWAY_KEY"
+    monkeypatch.setenv(key_env, "")
+    with TestClient(create_app(path)) as client:
+        created = client.post("/api/endpoints", json={
+            "id": "private-gateway",
+            "base_url": "https://private.example.test/v1",
+            "protocol": "chat",
+            "kind": "provider",
+            "api_key": "private-secret-value",
+        })
+        assert created.status_code == 200
+        assert created.json()["api_key_configured"] is True
+        assert "private-secret-value" not in created.text
+
+        metadata = client.get("/api/config")
+        endpoint = next(item for item in metadata.json()["endpoints"] if item["id"] == "private-gateway")
+        assert endpoint["api_key_env"] == key_env
+        assert endpoint["api_key_configured"] is True
+        assert "private-secret-value" not in metadata.text
+
+        async def fake_discover(endpoint_id):
+            endpoint_config = client.app.state.engine.config.endpoints[endpoint_id]
+            assert client.app.state.engine.config.api_key_for(endpoint_config) == "private-secret-value"
+            return ["model-a", "model-b"]
+
+        client.app.state.engine.discover = fake_discover
+        discovered = client.post("/api/discover/private-gateway")
+        assert discovered.json()["models"] == ["model-a", "model-b"]
+        imported = client.post("/api/discover/private-gateway/import", json={"models": discovered.json()["models"]})
+        assert imported.json()["imported"] == ["model-a", "model-b"]
+
+    assert f"api_key_env = \"{key_env}\"" in path.read_text()
+    assert "private-secret-value" not in path.read_text()
+    assert "private-secret-value" in (tmp_path / ".env").read_text()
+    assert (tmp_path / ".env").stat().st_mode & 0o777 == 0o600
+
+
+def test_configuration_ui_round_trips_network_settings(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("TEST_GATEWAY_KEY", "secret-value")
+    path = write_config(tmp_path)
+    path.write_text(path.read_text().replace(
+        "allow_benchmark = false",
+        "allow_benchmark = false\nallow_config_ui = true",
+    ))
+
+    with TestClient(create_app(path)) as client:
+        saved = client.put("/api/network", json={
+            "benchmark_use_proxy": True,
+            "fallback_proxy": "http://127.0.0.1:7897/",
+        })
+        assert saved.status_code == 200
+        assert saved.json()["benchmark_use_proxy"] is True
+        metadata = client.get("/api/config").json()
+        assert metadata["network"] == {
+            "benchmark_use_proxy": True,
+            "fallback_proxy": "http://127.0.0.1:7897",
+        }
+        assert len(metadata["endpoints"]) == 1
+        assert len(metadata["configured_models"]) == 1
+
+    config = load_config(path)
+    assert config.network.benchmark_use_proxy is True
+    assert config.network.fallback_proxy == "http://127.0.0.1:7897"
+
+
+def test_configuration_ui_saves_artificial_analysis_key_without_exposing_it(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("TEST_GATEWAY_KEY", "secret-value")
+    monkeypatch.delenv("ARTIFICIAL_ANALYSIS_API_KEY", raising=False)
+    path = write_config(tmp_path)
+    path.write_text(path.read_text().replace(
+        "allow_benchmark = false",
+        "allow_benchmark = false\nallow_config_ui = true",
+    ))
+
+    with TestClient(create_app(path)) as client:
+        before = client.get("/api/config").json()
+        source = next(item for item in before["ranking_sources"] if item["id"] == "artificial_analysis")
+        assert source["api_key_configured"] is False
+
+        saved = client.put("/api/ranking-sources/artificial-analysis", json={"api_key": "aa-secret-value"})
+        assert saved.status_code == 200
+        assert "aa-secret-value" not in saved.text
+
+        after = client.get("/api/config")
+        source = next(item for item in after.json()["ranking_sources"] if item["id"] == "artificial_analysis")
+        assert source["api_key_configured"] is True
+        assert "aa-secret-value" not in after.text
+        assert "aa-secret-value" not in after.json()["toml"]
+
+    dotenv = (tmp_path / ".env").read_text()
+    assert "ARTIFICIAL_ANALYSIS_API_KEY" in dotenv
+    assert "aa-secret-value" in dotenv
 
 
 def test_browser_batch_benchmark_stays_disabled_by_default(tmp_path: Path, monkeypatch):

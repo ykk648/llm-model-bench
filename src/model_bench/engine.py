@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -13,6 +14,7 @@ import httpx
 from .benchmark import Result, measure_samples
 from .config import AppConfig, ConfigError
 from .ranking import Rankings
+from .ranking_sources import ARTIFICIAL_ANALYSIS_KEY_ENV, refresh_public_rankings
 from .storage import ResultStore
 
 
@@ -28,6 +30,21 @@ class BenchmarkEngine:
         if not path or not path.exists():
             return {"models": {}}
         return json.loads(path.read_text())
+
+    def reload_rankings(self) -> None:
+        self.rankings = Rankings(self.config.rankings_path)
+
+    def refresh_rankings(self) -> dict:
+        if self.config.rankings_path is None:
+            raise ConfigError("Configure paths.rankings before refreshing public rankings.")
+        snapshot = refresh_public_rankings(
+            self.config.rankings_path,
+            fallback_proxy=self.config.network.fallback_proxy,
+            artificial_analysis_api_key=os.getenv(ARTIFICIAL_ANALYSIS_KEY_ENV, "").strip(),
+            configured_models=[model.request_model for model in self.config.models.values()],
+        )
+        self.rankings = Rankings(self.config.rankings_path)
+        return snapshot
 
     def leaderboard(self) -> list[dict]:
         by_request = {
@@ -75,7 +92,8 @@ class BenchmarkEngine:
         async with self._lock:
             timeout = httpx.Timeout(self.config.benchmark.request_timeout_seconds,
                                     connect=self.config.benchmark.connect_timeout_seconds)
-            async with httpx.AsyncClient(timeout=timeout, trust_env=True) as client:
+            proxy = self.config.network.fallback_proxy if self.config.network.benchmark_use_proxy else None
+            async with httpx.AsyncClient(timeout=timeout, trust_env=False, proxy=proxy) as client:
                 result = await measure_samples(client, endpoint, api_key, model, self.config.benchmark)
             self.store.save(result)
             return result
@@ -111,7 +129,8 @@ class BenchmarkEngine:
         key = self.config.api_key_for(endpoint)
         if endpoint.api_key_env and not key:
             raise ConfigError(f"Set {endpoint.api_key_env} before discovery")
-        async with httpx.AsyncClient(timeout=20, trust_env=True) as client:
+        proxy = self.config.network.fallback_proxy if self.config.network.benchmark_use_proxy else None
+        async with httpx.AsyncClient(timeout=20, trust_env=False, proxy=proxy) as client:
             response = await client.get(f"{endpoint.base_url}/models", headers={"Authorization": f"Bearer {key}"})
             response.raise_for_status()
             data = response.json().get("data")

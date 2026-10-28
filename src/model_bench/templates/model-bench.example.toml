@@ -16,6 +16,12 @@ connect_timeout_seconds = 15
 top_n = 10
 ranked_only = false
 
+[network]
+# Benchmarks and model discovery connect directly unless this is true.
+benchmark_use_proxy = false
+# Ranking refreshes always try official sites directly before using this proxy.
+fallback_proxy = "http://127.0.0.1:7897"
+
 [web]
 # Keep false for a public deployment. Use the CLI for paid requests.
 allow_benchmark = false

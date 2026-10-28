@@ -63,8 +63,17 @@ function render() {
   if (!rows) return;
   rows.innerHTML = filtered.map(model => {
     const speed = model.speed;
-    const shortNames = { "Epoch ECI": "ECI", "LiveBench Coding": "LiveBench", "Epoch GPQA": "GPQA", "Artificial Analysis": "AA", "Arena Text": "Arena" };
-    const sources = model.metrics.map(metric => `<a href="${escapeHtml(metric.url || "#")}" target="_blank" rel="noopener" title="${escapeHtml(metric.label + " " + metric.value)}">${escapeHtml(shortNames[metric.label] || metric.label)}</a>`).join('<span class="dot">·</span>');
+    const shortNames = { "LiveBench Coding": "LiveBench", "Artificial Analysis": "AA", "LMArena Text": "Arena" };
+    const epochMetrics = model.metrics.filter(metric => metric.label.startsWith("Epoch "));
+    const sourceLinks = [];
+    if (epochMetrics.length) {
+      const details = epochMetrics.map(metric => `${metric.label.replace("Epoch ", "")} ${metric.value}`).join(" · ");
+      sourceLinks.push(`<a href="${escapeHtml(epochMetrics[0].url || "#")}" target="_blank" rel="noopener" title="${escapeHtml(`Epoch AI · ${details}`)}">Epoch</a>`);
+    }
+    for (const metric of model.metrics.filter(metric => !metric.label.startsWith("Epoch "))) {
+      sourceLinks.push(`<a href="${escapeHtml(metric.url || "#")}" target="_blank" rel="noopener" title="${escapeHtml(metric.label + " " + metric.value)}">${escapeHtml(shortNames[metric.label] || metric.label)}</a>`);
+    }
+    const sources = sourceLinks.join('<span class="dot">·</span>');
     const price = model.price ? `<div class="price"><span>输入 <b>${priceFmt(model.price.input)}</b></span><span>输出 <b>${priceFmt(model.price.output)}</b></span></div>` : '<span class="muted">—</span>';
     const outputSpeed = speed?.status === "ok" ? `<span class="numeric">${fmt(speed.tokens_per_second)}</span>${speed.confidence !== "moderate" ? `<sup title="${escapeHtml(speed.token_source === "estimated" ? "接口未返回精确用量，按文本长度粗估" : "可见输出少于150 token或仅一次有效样本")}">参考</sup>` : ""}` : speed ? `<span class="error" title="${escapeHtml(speed.error)}">${speed.status === "no_text" ? "无文本" : "失败"}</span>` : "—";
     const customBadge = model.custom ? '<span class="custom-badge">自建</span>' : "";
@@ -103,6 +112,7 @@ async function load() {
     const actionHeader = $("action-header");
     if (actionHeader) actionHeader.hidden = !status.web_benchmark_enabled;
     $("config-link")?.toggleAttribute("hidden", !status.web_config_enabled);
+    $("refresh-ranking")?.toggleAttribute("hidden", !status.web_config_enabled);
     if (status.running) showNotice(`串行测速中：${status.progress}`, "info");
     else if (lastRunning && status.last_error) showNotice(`测速完成，部分请求失败：${status.last_error}`, "error");
     else if (lastRunning) showNotice(status.progress || "测速完成", "success");
@@ -111,6 +121,38 @@ async function load() {
     render();
   } catch (error) {
     showNotice(error.message, "error");
+  }
+}
+
+async function refreshRankings() {
+  const button = $("refresh-ranking");
+  if (!button) return;
+  button.disabled = true;
+  const original = button.innerHTML;
+  button.textContent = "拉取中…";
+  showNotice("正在刷新 Epoch AI、LiveBench、LMArena 和 Artificial Analysis…", "info");
+  try {
+    const result = await api("/api/rankings/refresh", { method: "POST" });
+    await load();
+    const sources = (result.sources || []).map(source => {
+      if (source.status === "cached") return `${source.name} 已复用`;
+      if (source.status === "skipped") return `${source.name} 已跳过（${source.reason || "未配置"}）`;
+      if (source.status === "error") return `${source.name} 失败（${source.reason || "未知错误"}${source.using_cache ? "，保留旧数据" : ""}）`;
+      return `${source.name} 已更新`;
+    }).join("，");
+    const network = result.fetched_via === "fallback_proxy"
+      ? "部分来源在直连失败后使用了备用代理"
+      : result.fetched_via === "cache"
+        ? "本次未重复请求上游"
+        : result.fetched_via === "mixed"
+          ? "已复用成功来源并重试其余来源"
+          : "更新来源已通过官网直连完成";
+    showNotice(`${sources || "上游数据已更新"}；${network}；${result.ranked_count} / ${result.model_count} 个模型进入排名。`, "success");
+  } catch (error) {
+    showNotice(`刷新失败，已保留原排名数据：${error.message}`, "error");
+  } finally {
+    button.innerHTML = original;
+    button.disabled = false;
   }
 }
 
@@ -158,6 +200,7 @@ $("select-all")?.addEventListener("change", event => {
   render();
 });
 $("batch-benchmark")?.addEventListener("click", batchBenchmark);
+$("refresh-ranking")?.addEventListener("click", refreshRankings);
 $("rows")?.addEventListener("change", event => {
   const checkbox = event.target.closest("input[data-select-model]");
   if (!checkbox) return;

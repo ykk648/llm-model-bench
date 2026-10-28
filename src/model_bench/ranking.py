@@ -7,19 +7,21 @@ import re
 from bisect import bisect_right
 from pathlib import Path
 
+from .ranking_sources import model_family
+
 WEIGHTS = {
-    "eci": 0.35,
-    "livebench_coding": 0.20,
-    "gpqa_diamond": 0.10,
-    "aa_intelligence": 0.20,
-    "arena_text": 0.15,
+    "eci": 0.20,
+    "livebench_coding": 0.15,
+    "gpqa_diamond": 0.05,
+    "aa_intelligence": 0.30,
+    "arena_text": 0.30,
 }
 LABELS = {
     "eci": "Epoch ECI",
     "livebench_coding": "LiveBench Coding",
     "gpqa_diamond": "Epoch GPQA",
     "aa_intelligence": "Artificial Analysis",
-    "arena_text": "Arena Text",
+    "arena_text": "LMArena Text",
 }
 
 
@@ -34,6 +36,7 @@ class Rankings:
             self.snapshot = json.loads(path.read_text())
         self.models = self.snapshot.get("models", [])
         self.by_id = {canonical(model["id"]): model for model in self.models}
+        self.by_family: dict[str, list[dict]] = {}
         self.by_tail: dict[str, list[dict]] = {}
         self.distributions: dict[str, list[float]] = {}
         for metric in WEIGHTS:
@@ -42,14 +45,24 @@ class Rankings:
                 if score.get("league") == metric and isinstance(score.get("score"), (int, float))
             )
         for model in self.models:
-            self.by_tail.setdefault(canonical(model["id"].split("/")[-1]), []).append(model)
+            aliases = [model["id"], *model.get("aliases", [])]
+            for alias in aliases:
+                self.by_tail.setdefault(canonical(alias.split("/")[-1]), []).append(model)
+                family = model_family(alias)
+                if family:
+                    self.by_family.setdefault(family, []).append(model)
 
     def match(self, model_id: str) -> dict | None:
         exact = self.by_id.get(canonical(model_id))
         if exact:
             return exact
         candidates = self.by_tail.get(canonical(model_id.split("/")[-1]), [])
-        return candidates[0] if len(candidates) == 1 else None
+        unique = list({id(model): model for model in candidates}.values())
+        if len(unique) == 1:
+            return unique[0]
+        family_candidates = self.by_family.get(model_family(model_id), [])
+        unique = list({id(model): model for model in family_candidates}.values())
+        return unique[0] if len(unique) == 1 else None
 
     def rank(self, model_ids: list[str]) -> list[dict]:
         rows = []
@@ -68,7 +81,7 @@ class Rankings:
                             "source": score.get("source", ""),
                             "url": score.get("sourceUrl", ""),
                         })
-            eligible = len(metrics) >= 2 and any(item["metric"] in {"eci", "livebench_coding"} for item in metrics)
+            eligible = len(metrics) >= 2
             weighted = sum(item["percentile"] * WEIGHTS[item["metric"]] for item in metrics)
             total_weight = sum(WEIGHTS[item["metric"]] for item in metrics)
             rows.append({

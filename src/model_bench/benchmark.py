@@ -34,6 +34,10 @@ class UnsupportedProtocol(Exception):
     pass
 
 
+def _error_text(exc: Exception) -> str:
+    return (str(exc).strip() or type(exc).__name__)[:300]
+
+
 def _output_tokens(payload: dict, protocol: str) -> int | None:
     usage = payload.get("usage") or {}
     raw = usage.get("output_tokens" if protocol in {"responses", "messages"} else "completion_tokens")
@@ -161,11 +165,11 @@ async def measure(client: httpx.AsyncClient, endpoint: EndpointConfig, api_key: 
                     include_usage=supports_stream_usage,
                 )
             except Exception as retry_exc:
-                return Result(model.id, "chat", "error", error=str(retry_exc)[:300], effort=model.reasoning_effort)
+                return Result(model.id, "chat", "error", error=_error_text(retry_exc), effort=model.reasoning_effort)
         except Exception as exc:
-            return Result(model.id, "chat", "error", error=str(exc)[:300], effort=model.reasoning_effort)
+            return Result(model.id, "chat", "error", error=_error_text(exc), effort=model.reasoning_effort)
     except Exception as exc:
-        return Result(model.id, model.protocol, "error", error=str(exc)[:300], effort=model.reasoning_effort)
+        return Result(model.id, model.protocol, "error", error=_error_text(exc), effort=model.reasoning_effort)
 
 
 async def measure_samples(client: httpx.AsyncClient, endpoint: EndpointConfig, api_key: str, model: ModelConfig,

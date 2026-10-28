@@ -7,6 +7,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -57,6 +58,12 @@ class WebSettings:
 
 
 @dataclass(frozen=True)
+class NetworkSettings:
+    benchmark_use_proxy: bool
+    fallback_proxy: str | None
+
+
+@dataclass(frozen=True)
 class AppConfig:
     path: Path
     database_path: Path
@@ -65,6 +72,7 @@ class AppConfig:
     endpoints: dict[str, EndpointConfig]
     models: dict[str, ModelConfig]
     benchmark: BenchmarkSettings
+    network: NetworkSettings
     web: WebSettings
 
     def api_key_for(self, endpoint: EndpointConfig) -> str:
@@ -105,6 +113,18 @@ def _protocol(value: Any, label: str) -> str:
     if protocol not in SUPPORTED_PROTOCOLS:
         raise ConfigError(f"{label} protocol must be one of: {', '.join(sorted(SUPPORTED_PROTOCOLS))}")
     return protocol
+
+
+def _optional_proxy(value: Any, label: str) -> str | None:
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ConfigError(f"{label} must be an HTTP or HTTPS URL")
+    proxy = value.strip().rstrip("/")
+    parsed = urlparse(proxy)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ConfigError(f"{label} must be an HTTP or HTTPS URL")
+    return proxy
 
 
 def load_config(path: str | Path | None = None) -> AppConfig:
@@ -198,6 +218,16 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         ranked_only=bool(benchmark_raw.get("ranked_only", False)),
     )
 
+    network_raw = raw.get("network", {})
+    if not isinstance(network_raw, dict):
+        raise ConfigError("[network] must be a table")
+    network = NetworkSettings(
+        benchmark_use_proxy=bool(network_raw.get("benchmark_use_proxy", False)),
+        fallback_proxy=_optional_proxy(network_raw.get("fallback_proxy"), "network.fallback_proxy"),
+    )
+    if network.benchmark_use_proxy and not network.fallback_proxy:
+        raise ConfigError("network.fallback_proxy is required when benchmark_use_proxy is true")
+
     web_raw = raw.get("web", {})
     if not isinstance(web_raw, dict):
         raise ConfigError("[web] must be a table")
@@ -214,5 +244,6 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         endpoints=endpoints,
         models=models,
         benchmark=benchmark,
+        network=network,
         web=web,
     )

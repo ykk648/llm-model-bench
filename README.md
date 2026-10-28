@@ -103,7 +103,17 @@ allow_config_ui = true
 admin_token_env = "MODEL_BENCH_ADMIN_TOKEN"
 ```
 
-此时 `/settings` 可直接添加订阅端点、刷新 `/models`、勾选导入模型，也可以编辑和校验完整 `model-bench.toml`；保存后立即重载。主榜单可单个测速或勾选多个模型批量测速。批量任务仍严格串行，单个失败不会阻止后续模型继续执行。它不会读取或展示 `.env` 的任何值；API Key 仍只能通过环境变量配置。对外部署时，请同时使用 HTTPS、部署层认证和管理员令牌。
+此时 `/settings` 可直接填写订阅端点和 API Key。网页会为新端点生成独立的环境变量名，将密钥写入本机、Git 已忽略且权限为 `0600` 的 `.env`，随后刷新 `/models` 并导入返回的全部模型；也可以手动刷新、全选或只勾选部分模型。榜单数据源区域会列出所需密钥，并允许直接保存 Artificial Analysis API Key。配置接口只返回“密钥已配置”的状态，不会读取或回显密钥明文，密钥也不会进入 `model-bench.toml`。
+
+配置页还可以设置网络策略：测速和模型列表默认直连，也可显式开启代理；刷新公开榜单始终先直连官网，只有连接、DNS 或超时失败时才使用备用代理。程序不会继承 `HTTP_PROXY`、`HTTPS_PROXY` 等系统代理环境变量。对应配置为：
+
+```toml
+[network]
+benchmark_use_proxy = false
+fallback_proxy = "http://127.0.0.1:7897"
+```
+
+配置页也可以编辑和校验完整 TOML，保存后立即重载。主榜单可单个测速或勾选多个模型批量测速。批量任务仍严格串行，单个失败不会阻止后续模型继续执行。对外部署时，请同时使用 HTTPS、部署层认证和管理员令牌；不应把允许写入密钥的配置页直接暴露到公网。
 
 ## 可选排名与价格
 
@@ -112,6 +122,8 @@ admin_token_env = "MODEL_BENCH_ADMIN_TOKEN"
 - `rankings` 是用户允许使用和重新分发的数据快照。无法唯一匹配的模型不会参与排序。
 - `prices` 是用户维护的价格快照；自建模型可写为 `null`。
 - 仓库只带最小示例。使用外部数据前，请自行核实上游条款、访问方式和数据许可。
+
+网页刷新会合并 Epoch ECI、Epoch GPQA、LiveBench Coding、LMArena Text 与 Artificial Analysis Intelligence Index。综合百分位默认更重视后两项：Artificial Analysis 30%、LMArena 30%、Epoch ECI 20%、LiveBench Coding 15%、Epoch GPQA 5%。未配置 Artificial Analysis Key 时该来源会明确标记为跳过，其余榜单仍正常刷新。
 
 ## 开发
 

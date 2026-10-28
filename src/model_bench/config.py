@@ -202,7 +202,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     if not isinstance(benchmark_raw, dict):
         raise ConfigError("[benchmark] must be a table")
     samples = int(benchmark_raw.get("samples", 2))
-    max_output_tokens = int(benchmark_raw.get("max_output_tokens", 512))
+    max_output_tokens = int(benchmark_raw.get("max_output_tokens", 2048))
     if not 1 <= samples <= 10:
         raise ConfigError("benchmark.samples must be between 1 and 10")
     if not 32 <= max_output_tokens <= 8192:

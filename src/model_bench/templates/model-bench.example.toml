@@ -9,7 +9,7 @@ prices = "prices.example.json"
 [benchmark]
 # Strictly serial: model-bench never runs benchmark requests concurrently.
 samples = 2
-max_output_tokens = 512
+max_output_tokens = 2048
 cooldown_hours = 72
 request_timeout_seconds = 120
 connect_timeout_seconds = 15

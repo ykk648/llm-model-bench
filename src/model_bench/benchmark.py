@@ -12,6 +12,7 @@ import httpx
 from .config import BenchmarkSettings, EndpointConfig, ModelConfig
 
 UNSUPPORTED = ("not support", "unsupported", "unknown endpoint", "not found", "invalid url", "unrecognized", "不支持")
+MESSAGES_MIN_OUTPUT_TOKENS = 2048
 
 
 @dataclass
@@ -76,7 +77,7 @@ async def _stream(client: httpx.AsyncClient, endpoint: EndpointConfig, api_key: 
     elif protocol == "messages":
         path = "messages"
         body = {"model": model.request_model, "messages": [{"role": "user", "content": settings.prompt}],
-                "stream": True, "max_tokens": settings.max_output_tokens}
+                "stream": True, "max_tokens": max(settings.max_output_tokens, MESSAGES_MIN_OUTPUT_TOKENS)}
         if model.reasoning_effort:
             body["output_config"] = {"effort": model.reasoning_effort}
         headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}

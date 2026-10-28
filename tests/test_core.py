@@ -175,7 +175,9 @@ def test_messages_stream_uses_anthropic_endpoint_and_headers(tmp_path: Path, mon
     assert seen[0].url.path == "/v1/messages"
     assert seen[0].headers["x-api-key"] == "secret"
     assert seen[0].headers["anthropic-version"] == "2023-06-01"
-    assert json.loads(seen[0].content)["model"] == "actual-server-id"
+    body = json.loads(seen[0].content)
+    assert body["model"] == "actual-server-id"
+    assert body["max_tokens"] == 2048
 
 
 def test_fallback_only_retries_unsupported_protocol(tmp_path: Path, monkeypatch):

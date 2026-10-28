@@ -18,6 +18,7 @@ from dotenv import set_key
 
 from .config import AppConfig, ConfigError, SUPPORTED_PROTOCOLS, load_config
 from .engine import BenchmarkEngine
+from .ranking import DEFAULT_RANKING_SOURCE, RANKING_SOURCES
 from .ranking_sources import ARTIFICIAL_ANALYSIS_KEY_ENV, RankingRefreshError
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -157,7 +158,7 @@ def create_app(config_path: str | Path | None = None) -> FastAPI:
                 },
                 {
                     "id": "livebench",
-                    "name": "LiveBench Coding",
+                    "name": "LiveBench 综合能力",
                     "api_key_required": False,
                     "api_key_configured": True,
                 },
@@ -265,18 +266,22 @@ def create_app(config_path: str | Path | None = None) -> FastAPI:
         }
 
     @app.get("/api/leaderboard")
-    def leaderboard():
-        return engine.leaderboard()
+    def leaderboard(source: str = DEFAULT_RANKING_SOURCE):
+        if source not in RANKING_SOURCES:
+            raise HTTPException(422, f"Unknown ranking source: {source}")
+        return engine.leaderboard(source)
 
     @app.post("/api/rankings/refresh")
-    def refresh_rankings(request: Request):
+    def refresh_rankings(request: Request, source: str = DEFAULT_RANKING_SOURCE):
         require_config_access(request)
+        if source not in RANKING_SOURCES:
+            raise HTTPException(422, f"Unknown ranking source: {source}")
         ensure_idle("A benchmark is running; wait before refreshing rankings.")
         try:
             snapshot = engine.refresh_rankings()
         except (ConfigError, RankingRefreshError, OSError) as exc:
             raise HTTPException(502, _error_text(exc, 800)) from exc
-        rows = engine.leaderboard()
+        rows = engine.leaderboard(source)
         return {
             "refreshed": True,
             "model_count": len(rows),

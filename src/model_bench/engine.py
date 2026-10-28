@@ -13,7 +13,7 @@ import httpx
 
 from .benchmark import Result, measure_samples
 from .config import AppConfig, ConfigError
-from .ranking import Rankings
+from .ranking import DEFAULT_RANKING_SOURCE, Rankings
 from .ranking_sources import ARTIFICIAL_ANALYSIS_KEY_ENV, refresh_public_rankings
 from .storage import ResultStore
 
@@ -46,10 +46,13 @@ class BenchmarkEngine:
         self.rankings = Rankings(self.config.rankings_path)
         return snapshot
 
-    def leaderboard(self) -> list[dict]:
+    def leaderboard(self, ranking_source: str = DEFAULT_RANKING_SOURCE) -> list[dict]:
         by_request = {
             row["id"]: row
-            for row in self.rankings.rank(list(dict.fromkeys(model.request_model for model in self.config.models.values())))
+            for row in self.rankings.rank(
+                list(dict.fromkeys(model.request_model for model in self.config.models.values())),
+                ranking_source,
+            )
         }
         results = self.store.latest_by_model()
         prices = self._prices().get("models", {})

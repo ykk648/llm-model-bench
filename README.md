@@ -123,7 +123,7 @@ fallback_proxy = "http://127.0.0.1:7897"
 - `prices` 是用户维护的价格快照；自建模型可写为 `null`。
 - 仓库只带最小示例。使用外部数据前，请自行核实上游条款、访问方式和数据许可。
 
-网页刷新会合并 Epoch ECI、Epoch GPQA、LiveBench Coding、LMArena Text 与 Artificial Analysis Intelligence Index。综合百分位默认更重视后两项：Artificial Analysis 30%、LMArena 30%、Epoch ECI 20%、LiveBench Coding 15%、Epoch GPQA 5%。未配置 Artificial Analysis Key 时该来源会明确标记为跳过，其余榜单仍正常刷新。
+网页刷新会获取 Epoch ECI、Epoch GPQA、LiveBench 综合能力、LMArena Text 与 Artificial Analysis Intelligence Index。LiveBench 综合分按官网当前权重合并 Long Agentic、推理、代码、浏览器、数据分析、研究与设计任务。首页可在 Epoch AI、LiveBench、LMArena 和 Artificial Analysis 四个榜单间切换，按所选来源单独计算百分位和名次，默认使用 Epoch ECI；缺少当前榜单成绩的模型不会参与该榜排名。未配置 Artificial Analysis Key 时该来源会明确标记为跳过，其余榜单仍正常刷新。
 
 ## 开发
 

@@ -51,7 +51,7 @@ tags = ["text", "coding"]
     (tmp_path / "rankings.json").write_text(json.dumps({"models": [{
         "id": "vendor/actual-server-id", "name": "Actual Server", "scores": [
             {"league": "eci", "score": 150, "source": "source", "sourceUrl": "https://example.test"},
-            {"league": "livebench_coding", "score": 70, "source": "source", "sourceUrl": "https://example.test"},
+            {"league": "livebench_overall", "score": 70, "source": "source", "sourceUrl": "https://example.test"},
         ],
     }]}))
     (tmp_path / "prices.json").write_text(json.dumps({"captured_at": "2026-01-01", "models": {"Public-Name": {"input": 1, "output": 2}}}))
@@ -225,6 +225,20 @@ def test_leaderboard_uses_local_optional_snapshots(tmp_path: Path, monkeypatch):
     assert row["price"] == {"input": 1, "output": 2}
 
 
+def test_leaderboard_api_selects_one_public_source(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("TEST_GATEWAY_KEY", "secret")
+    with TestClient(create_app(write_config(tmp_path))) as client:
+        epoch = client.get("/api/leaderboard").json()[0]
+        livebench = client.get("/api/leaderboard?source=livebench").json()[0]
+        invalid = client.get("/api/leaderboard?source=unknown")
+
+    assert epoch["ranking_source"] == "epoch"
+    assert epoch["metrics"][0]["metric"] == "eci"
+    assert livebench["ranking_source"] == "livebench"
+    assert livebench["metrics"][0]["metric"] == "livebench_overall"
+    assert invalid.status_code == 422
+
+
 def test_same_request_model_on_different_endpoints_keeps_both_rows(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("TEST_GATEWAY_KEY", "secret")
     config = load_config(write_config(tmp_path, """
@@ -304,6 +318,11 @@ def test_configuration_ui_refreshes_ranking_snapshot(tmp_path: Path, monkeypatch
 
 def test_public_ranking_refresh_fetches_and_atomically_combines_sources(tmp_path: Path):
     path = tmp_path / "rankings.json"
+    path.write_text(json.dumps({"models": [{
+        "id": "claude-opus-4-6",
+        "name": "Claude Opus 4.6",
+        "scores": [{"league": "livebench_coding", "score": 78}],
+    }]}))
 
     def handler(request: httpx.Request):
         url = str(request.url)
@@ -322,11 +341,15 @@ def test_public_ranking_refresh_fetches_and_atomically_combines_sources(tmp_path
         if url.endswith("/main.test.js"):
             return httpx.Response(200, text='const RELEASES=["20261014","20261025"];')
         if url.endswith("/data/20261025/categories.json"):
-            return httpx.Response(200, json={"Coding": ["code_generation", "code_completion"]})
+            return httpx.Response(200, json={
+                "Long Agentic": ["tool_use"],
+                "Reasoning": ["reasoning"],
+                "_overall_weights": {"Long Agentic": 2},
+            })
         if url.endswith("/data/20261025/table.csv"):
             return httpx.Response(200, text=(
-                "model,code_generation,code_completion\n"
-                "claude-opus-4-6-thinking-auto-high-effort,80,76\n"
+                "model,tool_use,reasoning\n"
+                "claude-opus-4-6-thinking-auto-high-effort,80,70\n"
             ))
         if request.url.host == "datasets-server.huggingface.co":
             return httpx.Response(200, json={
@@ -350,8 +373,11 @@ def test_public_ranking_refresh_fetches_and_atomically_combines_sources(tmp_path
     model = snapshot["models"][0]
     assert model["id"] == "claude-opus-4-6"
     assert {score["league"] for score in model["scores"]} == {
-        "eci", "gpqa_diamond", "livebench_coding", "arena_text",
+        "eci", "gpqa_diamond", "livebench_overall", "arena_text",
     }
+    livebench = next(score for score in model["scores"] if score["league"] == "livebench_overall")
+    assert livebench["score"] == 76.6667
+    assert all(score["league"] != "livebench_coding" for score in model["scores"])
     assert snapshot["sources"][2]["name"] == "LMArena"
     assert snapshot["sources"][3]["status"] == "skipped"
     assert Rankings(path).match("claude-opus-4-6_0.4")["id"] == "claude-opus-4-6"
@@ -371,9 +397,13 @@ def _ranking_success_handler(request: httpx.Request) -> httpx.Response:
     if url.endswith("/main.test.js"):
         return httpx.Response(200, text='const RELEASES=["20261025"];')
     if url.endswith("/data/20261025/categories.json"):
-        return httpx.Response(200, json={"Coding": ["coding"]})
+        return httpx.Response(200, json={
+            "Long Agentic": ["agentic"],
+            "Reasoning": ["reasoning"],
+            "_overall_weights": {"Long Agentic": 2},
+        })
     if url.endswith("/data/20261025/table.csv"):
-        return httpx.Response(200, text="model,coding\nmodel-a,75\n")
+        return httpx.Response(200, text="model,agentic,reasoning\nmodel-a,75,60\n")
     if request.url.host == "datasets-server.huggingface.co":
         return httpx.Response(200, json={
             "rows": [{"row": {
@@ -700,17 +730,21 @@ tags = ["text"]
         assert max_active == 1
 
 
-def test_unambiguous_tail_matching_and_minimum_scores(tmp_path: Path):
+def test_unambiguous_tail_matching_and_selectable_source(tmp_path: Path):
     path = tmp_path / "ranking.json"
     path.write_text(json.dumps({"models": [
         {"id": "one/model", "name": "Model", "scores": [
             {"league": "eci", "score": 150, "source": "x", "sourceUrl": "https://x"},
-            {"league": "livebench_coding", "score": 70, "source": "x", "sourceUrl": "https://x"},
+            {"league": "livebench_overall", "score": 70, "source": "x", "sourceUrl": "https://x"},
         ]},
         {"id": "two/only-one", "name": "Only One", "scores": [
             {"league": "eci", "score": 155, "source": "x", "sourceUrl": "https://x"},
         ]},
     ]}))
-    rows = Rankings(path).rank(["model", "only-one", "unknown"])
-    assert rows[0]["id"] == "model" and rows[0]["rank"] == 1
-    assert all(row["score"] is None for row in rows[1:])
+    epoch_rows = Rankings(path).rank(["model", "only-one", "unknown"])
+    assert [row["id"] for row in epoch_rows] == ["only-one", "model", "unknown"]
+    assert [row["rank"] for row in epoch_rows] == [1, 2, None]
+
+    livebench_rows = Rankings(path).rank(["model", "only-one", "unknown"], "livebench")
+    assert livebench_rows[0]["id"] == "model" and livebench_rows[0]["rank"] == 1
+    assert all(row["score"] is None for row in livebench_rows[1:])

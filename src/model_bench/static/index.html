@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Model Bench</title>
-  <link rel="stylesheet" href="/static/style.css?v=9">
+  <link rel="stylesheet" href="/static/style.css?v=10">
 </head>
 <body>
   <header class="topbar">
@@ -29,6 +29,7 @@
       <div class="toolbar">
         <div class="toolbar-title"><h2>模型榜单</h2><span id="updated"></span></div>
         <div class="actions">
+          <label class="ranking-picker"><span>排名依据</span><select id="ranking-source" aria-label="选择排名榜单"><option value="epoch">Epoch AI</option><option value="livebench">LiveBench</option><option value="lmarena">LMArena</option><option value="artificial_analysis">Artificial Analysis</option></select></label>
           <button class="refresh-ranking" id="refresh-ranking" type="button" title="从 Epoch AI、LiveBench、LMArena 和 Artificial Analysis 拉取最新数据" hidden><span aria-hidden="true">↻</span>刷新排名</button>
           <button class="batch-benchmark" id="batch-benchmark" type="button" hidden disabled>测速所选</button>
           <label class="search"><span>⌕</span><input id="search" type="search" placeholder="搜索模型" aria-label="搜索模型"></label>
@@ -40,7 +41,7 @@
       <div class="notice" id="notice" hidden></div>
       <div class="table-scroll">
         <table>
-          <thead><tr><th id="select-header" class="select-cell" hidden><input id="select-all" type="checkbox" aria-label="选择当前筛选结果"></th><th class="rank-col">排名</th><th>模型</th><th>综合百分位 <span title="来自自动拉取的公开榜单快照；缺项在已知权重间归一。">ⓘ</span></th><th>价格 · $/百万 token <span title="来自用户导入的可选价格快照。">ⓘ</span></th><th class="sources-col">榜单依据</th><th class="ttft-col">TTFT <span title="请求开始到首个可见文本增量">ⓘ</span></th><th>输出 tok/s <span title="可见文本开始后的输出 token 速率；估算值会标记“参考”">ⓘ</span></th><th>测试时间</th><th id="action-header" hidden>操作</th></tr></thead>
+          <thead><tr><th id="select-header" class="select-cell" hidden><input id="select-all" type="checkbox" aria-label="选择当前筛选结果"></th><th class="rank-col">排名</th><th>模型</th><th>能力百分位 <span title="在当前所选榜单中的百分位；缺少该榜成绩的模型不参与排名。">ⓘ</span></th><th>价格 · $/百万 token <span title="来自用户导入的可选价格快照。">ⓘ</span></th><th class="sources-col">榜单依据</th><th class="ttft-col">TTFT <span title="请求开始到首个可见文本增量">ⓘ</span></th><th>输出 tok/s <span title="可见文本开始后的输出 token 速率；估算值会标记“参考”">ⓘ</span></th><th>测试时间</th><th id="action-header" hidden>操作</th></tr></thead>
           <tbody id="rows"></tbody>
         </table>
       </div>
@@ -48,10 +49,10 @@
     <div class="table-footer"><span id="count"></span><span><b id="scope">前 10 名</b>串行 · 每模型 2 次取中位 · <b id="interval">72</b> 小时冷却 · 单次上限 <b id="tokens">2048</b> token</span></div>
     </section>
     <footer>
-      <span>能力分由 Artificial Analysis、LMArena、Epoch AI 与 LiveBench 数据生成，并非本站自行测试。无法唯一匹配的模型不参与排名。</span>
+      <span>排名按当前选择的单一公开榜单生成，默认 Epoch AI；缺少该榜成绩或无法唯一匹配的模型不参与排名。</span>
       <span>速度来自本地真实请求。网页测速可由管理员开启；所有密钥仅由服务端环境变量读取。价格：<time id="price-date"></time> 快照。</span>
     </footer>
   </main>
-  <script src="/static/app.js?v=10" defer></script>
+  <script src="/static/app.js?v=12" defer></script>
 </body>
 </html>

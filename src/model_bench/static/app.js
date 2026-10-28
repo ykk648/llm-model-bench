@@ -7,6 +7,7 @@ const setText = (id, value) => {
 let models = [];
 let lastRunning = false;
 let serviceStatus = { running: false, current_model: "", web_benchmark_enabled: false };
+let rankingSource = localStorage.getItem("model-bench-ranking-source") || "epoch";
 const selectedModels = new Set();
 const fmt = (n, suffix = "") => n == null ? "—" : `${Number(n).toLocaleString("zh-CN", { maximumFractionDigits: 1 })}${suffix}`;
 const priceFmt = (n) => `$${Number(n).toFixed(3)}`;
@@ -63,7 +64,7 @@ function render() {
   if (!rows) return;
   rows.innerHTML = filtered.map(model => {
     const speed = model.speed;
-    const shortNames = { "LiveBench Coding": "LiveBench", "Artificial Analysis": "AA", "LMArena Text": "Arena" };
+    const shortNames = { "LiveBench 综合能力": "LiveBench", "Artificial Analysis Intelligence Index": "AA", "LMArena Text": "Arena" };
     const epochMetrics = model.metrics.filter(metric => metric.label.startsWith("Epoch "));
     const sourceLinks = [];
     if (epochMetrics.length) {
@@ -98,7 +99,10 @@ function render() {
 
 async function load() {
   try {
-    const [status, board] = await Promise.all([api("/api/status"), api("/api/leaderboard")]);
+    const [status, board] = await Promise.all([
+      api("/api/status"),
+      api(`/api/leaderboard?source=${encodeURIComponent(rankingSource)}`),
+    ]);
     models = board;
     serviceStatus = status;
     setText("endpoint", status.endpoint_label || "本地配置");
@@ -132,7 +136,7 @@ async function refreshRankings() {
   button.textContent = "拉取中…";
   showNotice("正在刷新 Epoch AI、LiveBench、LMArena 和 Artificial Analysis…", "info");
   try {
-    const result = await api("/api/rankings/refresh", { method: "POST" });
+    const result = await api(`/api/rankings/refresh?source=${encodeURIComponent(rankingSource)}`, { method: "POST" });
     await load();
     const sources = (result.sources || []).map(source => {
       if (source.status === "cached") return `${source.name} 已复用`;
@@ -192,6 +196,11 @@ function showNotice(text, type) {
 
 $("search")?.addEventListener("input", render);
 $("filter")?.addEventListener("change", render);
+$("ranking-source")?.addEventListener("change", event => {
+  rankingSource = event.target.value;
+  localStorage.setItem("model-bench-ranking-source", rankingSource);
+  load();
+});
 $("select-all")?.addEventListener("change", event => {
   for (const model of filteredModels()) {
     if (event.target.checked) selectedModels.add(model.id);
@@ -213,5 +222,6 @@ $("rows")?.addEventListener("click", event => {
   if (button && !button.disabled) benchmark(button.dataset.model);
 });
 
+if ($("ranking-source")) $("ranking-source").value = rankingSource;
 load();
 setInterval(load, 5000);

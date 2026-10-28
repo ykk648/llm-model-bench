@@ -1,4 +1,4 @@
-"""Transparent optional matching against a user-supplied public ranking snapshot."""
+"""Match configured models against one selected public leaderboard."""
 
 from __future__ import annotations
 
@@ -9,20 +9,21 @@ from pathlib import Path
 
 from .ranking_sources import model_family
 
-WEIGHTS = {
-    "eci": 0.20,
-    "livebench_coding": 0.15,
-    "gpqa_diamond": 0.05,
-    "aa_intelligence": 0.30,
-    "arena_text": 0.30,
+RANKING_SOURCES = {
+    "epoch": {"metric": "eci", "label": "Epoch AI", "metric_label": "Epoch ECI"},
+    "livebench": {
+        "metric": "livebench_overall",
+        "label": "LiveBench",
+        "metric_label": "LiveBench 综合能力",
+    },
+    "lmarena": {"metric": "arena_text", "label": "LMArena", "metric_label": "LMArena Text"},
+    "artificial_analysis": {
+        "metric": "aa_intelligence",
+        "label": "Artificial Analysis",
+        "metric_label": "Artificial Analysis Intelligence Index",
+    },
 }
-LABELS = {
-    "eci": "Epoch ECI",
-    "livebench_coding": "LiveBench Coding",
-    "gpqa_diamond": "Epoch GPQA",
-    "aa_intelligence": "Artificial Analysis",
-    "arena_text": "LMArena Text",
-}
+DEFAULT_RANKING_SOURCE = "epoch"
 
 
 def canonical(value: str) -> str:
@@ -39,7 +40,7 @@ class Rankings:
         self.by_family: dict[str, list[dict]] = {}
         self.by_tail: dict[str, list[dict]] = {}
         self.distributions: dict[str, list[float]] = {}
-        for metric in WEIGHTS:
+        for metric in {source["metric"] for source in RANKING_SOURCES.values()}:
             self.distributions[metric] = sorted(
                 score["score"] for model in self.models for score in model.get("scores", [])
                 if score.get("league") == metric and isinstance(score.get("score"), (int, float))
@@ -64,32 +65,41 @@ class Rankings:
         unique = list({id(model): model for model in family_candidates}.values())
         return unique[0] if len(unique) == 1 else None
 
-    def rank(self, model_ids: list[str]) -> list[dict]:
+    def rank(self, model_ids: list[str], source: str = DEFAULT_RANKING_SOURCE) -> list[dict]:
+        if source not in RANKING_SOURCES:
+            raise ValueError(f"Unknown ranking source: {source}")
+        source_config = RANKING_SOURCES[source]
+        selected_metric = source_config["metric"]
         rows = []
         for model_id in dict.fromkeys(model_ids):
             match = self.match(model_id)
             metrics = []
             if match:
-                for metric, weight in WEIGHTS.items():
-                    score = next((item for item in match.get("scores", []) if item.get("league") == metric), None)
-                    if score and self.distributions[metric]:
-                        metrics.append({
-                            "metric": metric,
-                            "label": LABELS[metric],
-                            "value": score["score"],
-                            "percentile": round(100 * bisect_right(self.distributions[metric], score["score"]) / len(self.distributions[metric]), 1),
-                            "source": score.get("source", ""),
-                            "url": score.get("sourceUrl", ""),
-                        })
-            eligible = len(metrics) >= 2
-            weighted = sum(item["percentile"] * WEIGHTS[item["metric"]] for item in metrics)
-            total_weight = sum(WEIGHTS[item["metric"]] for item in metrics)
+                score = next(
+                    (item for item in match.get("scores", []) if item.get("league") == selected_metric),
+                    None,
+                )
+                distribution = self.distributions[selected_metric]
+                if score and distribution:
+                    metrics.append({
+                        "metric": selected_metric,
+                        "label": source_config["metric_label"],
+                        "value": score["score"],
+                        "percentile": round(
+                            100 * bisect_right(distribution, score["score"]) / len(distribution),
+                            1,
+                        ),
+                        "source": score.get("source", ""),
+                        "url": score.get("sourceUrl", ""),
+                    })
             rows.append({
                 "id": model_id,
                 "name": match.get("name", model_id) if match else model_id,
                 "matched_id": match.get("id") if match else None,
-                "score": round(weighted / total_weight, 1) if eligible else None,
+                "score": metrics[0]["percentile"] if metrics else None,
                 "metrics": metrics,
+                "ranking_source": source,
+                "ranking_source_label": source_config["label"],
                 "rank": None,
             })
         rows.sort(key=lambda row: (row["score"] is None, -(row["score"] or 0), row["id"].lower()))

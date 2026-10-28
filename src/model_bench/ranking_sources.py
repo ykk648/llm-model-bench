@@ -252,29 +252,47 @@ def _load_livebench(client: httpx.Client, records: dict[str, _ModelRecord]) -> d
         categories = json.loads(categories_text)
     except json.JSONDecodeError as exc:
         raise RankingRefreshError("LiveBench 分类文件不是有效 JSON。") from exc
-    coding_columns = categories.get("Coding") if isinstance(categories, dict) else None
-    if not isinstance(coding_columns, list) or not coding_columns or not all(isinstance(x, str) for x in coding_columns):
-        raise RankingRefreshError("LiveBench 分类文件缺少 Coding 指标。")
+    if not isinstance(categories, dict):
+        raise RankingRefreshError("LiveBench 分类文件结构无效。")
+    category_columns = {
+        name: columns
+        for name, columns in categories.items()
+        if not name.startswith("_")
+        and isinstance(columns, list)
+        and columns
+        and all(isinstance(column, str) for column in columns)
+    }
+    if not category_columns:
+        raise RankingRefreshError("LiveBench 分类文件缺少综合能力指标。")
+    raw_weights = categories.get("_overall_weights", {})
+    category_weights = raw_weights if isinstance(raw_weights, dict) else {}
     rows = _csv_rows(table_text, "LiveBench 排行榜")
-    if "model" not in rows[0] or not set(coding_columns).issubset(rows[0]):
-        raise RankingRefreshError("LiveBench CSV 缺少 model 或 Coding 列。")
+    required_columns = {column for columns in category_columns.values() for column in columns}
+    if "model" not in rows[0] or not required_columns.issubset(rows[0]):
+        raise RankingRefreshError("LiveBench CSV 缺少 model 或综合能力列。")
     count = 0
     for row in rows:
         raw_id = (row.get("model") or "").strip()
-        values = [
-            _number(row[column], f"LiveBench {column}")
-            for column in coding_columns
-            if (row.get(column) or "").strip()
-        ]
-        if not raw_id or not values:
+        weighted_scores: list[tuple[float, float]] = []
+        for category, columns in category_columns.items():
+            values = [
+                _number(row[column], f"LiveBench {column}")
+                for column in columns
+                if (row.get(column) or "").strip()
+            ]
+            weight = category_weights.get(category, 1)
+            if values and isinstance(weight, (int, float)) and weight > 0:
+                weighted_scores.append((sum(values) / len(values), float(weight)))
+        if not raw_id or not weighted_scores:
             continue
         item = _record(records, raw_id, raw_id)
         if item is None:
             continue
         _set_score(
             item,
-            "livebench_coding",
-            sum(values) / len(values),
+            "livebench_overall",
+            sum(score * weight for score, weight in weighted_scores)
+            / sum(weight for _, weight in weighted_scores),
             "LiveBench",
             LIVEBENCH_SOURCE_URL,
             raw_id,
@@ -282,12 +300,12 @@ def _load_livebench(client: httpx.Client, records: dict[str, _ModelRecord]) -> d
         )
         count += 1
     if not count:
-        raise RankingRefreshError("LiveBench 数据未产生 Coding 成绩。")
+        raise RankingRefreshError("LiveBench 数据未产生综合能力成绩。")
     return {
         "id": "livebench",
         "name": "LiveBench",
         "status": "ok",
-        "metrics": ["livebench_coding"],
+        "metrics": ["livebench_overall"],
         "rows": count,
         "published_at": f"{date[:4]}-{date[4:6]}-{date[6:8]}",
         "url": LIVEBENCH_SOURCE_URL,
@@ -614,6 +632,7 @@ def _incremental_refresh(
 ) -> dict[str, Any]:
     previous = _load_previous_snapshot(path)
     records = _records_from_snapshot(previous)
+    _remove_metrics(records, ["livebench_coding", "livebench_agentic"])
     previous_sources = {
         source["id"]: source
         for source in previous.get("sources", [])
@@ -625,7 +644,7 @@ def _incremental_refresh(
     fetched_at = now.isoformat().replace("+00:00", "Z")
     source_specs = [
         ("epoch", ["eci", "gpqa_diamond"], lambda current, output: _load_epoch(current, output)),
-        ("livebench", ["livebench_coding"], lambda current, output: _load_livebench(current, output)),
+        ("livebench", ["livebench_overall"], lambda current, output: _load_livebench(current, output)),
         ("lmarena", ["arena_text"], lambda current, output: _load_lmarena(current, output)),
         (
             "artificial_analysis",
@@ -643,6 +662,7 @@ def _incremental_refresh(
             if (
                 models_unchanged
                 and old_source.get("status") in {"ok", "cached"}
+                and set(old_source.get("metrics", [])) == set(metrics)
                 and _source_is_fresh(old_source, previous, now)
             ):
                 cached = dict(old_source)
